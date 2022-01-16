@@ -2,12 +2,17 @@ import sqlite3
 
 from flask import Flask, jsonify, json, render_template, request, url_for, redirect, flash
 from werkzeug.exceptions import abort
+import logging
+
+db_conn_count = 0
 
 # Function to get a database connection.
 # This function connects to database with the name `database.db`
 def get_db_connection():
+    global db_conn_count
     connection = sqlite3.connect('database.db')
     connection.row_factory = sqlite3.Row
+    db_conn_count += 1
     return connection
 
 # Function to get a post using its ID
@@ -21,6 +26,36 @@ def get_post(post_id):
 # Define the Flask application
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your secret key'
+app.logger.setLevel(logging.DEBUG)
+
+# health check route
+@app.route('/healthz')
+def healthcheck():
+    response = app.response_class(
+        response=json.dumps({"result":"OK - healthy"}),
+        status=200,
+        mimetype='application/json'
+    )
+
+    ## log line
+    return response
+
+# Metrics endpoint
+@app.route('/metrics')
+def metrics():
+    global db_conn_count
+    connection = get_db_connection()
+    posts = connection.execute('SELECT * FROM posts').fetchall()
+    connection.close()
+    response = app.response_class(
+        response=json.dumps({"db_connection_count": db_conn_count, "post_count": len(posts)}),
+        status=200,
+        mimetype='application/json'
+    )
+
+    ## log line
+    return response
+
 
 # Define the main route of the web application 
 @app.route('/')
@@ -36,13 +71,17 @@ def index():
 def post(post_id):
     post = get_post(post_id)
     if post is None:
+      app.logger.info('Article not found.')
       return render_template('404.html'), 404
     else:
+      app.logger.info("Article {0} retrieved!".format(post['title']))
       return render_template('post.html', post=post)
+
 
 # Define the About Us page
 @app.route('/about')
 def about():
+    app.logger.info('About page visited.')
     return render_template('about.html')
 
 # Define the post creation functionality 
@@ -61,6 +100,7 @@ def create():
             connection.commit()
             connection.close()
 
+            app.logger.info("Article {0} created!".format(title))
             return redirect(url_for('index'))
 
     return render_template('create.html')
